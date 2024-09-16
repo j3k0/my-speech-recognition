@@ -72,17 +72,16 @@ An easy-to-use macOS application **and command-line tool** that integrates with 
 ### macOS Application
 
 Run the main service script:
-
 ```bash
-python whisper_groq_service.py
+python myspeech_service.py
 ```
 
 This will start the application in the background. Press **Control+V** to start recording. <REC> will appear while the recording takes place, until a silence is detected. The transcribed text will be pasted into your active application.
 
-**Available Options** for `whisper_groq_service.py`:
+**Available Options** for `myspeech_service.py`:
 
 ```text
-usage: whisper_groq_service.py [-h] [--model MODEL] [--verbose] [--initial-prompt INITIAL_PROMPT] [--retrieve-context]
+usage: myspeech_service.py [-h] [--model MODEL] [--verbose] [--initial-prompt INITIAL_PROMPT] [--retrieve-context]
 
 Optional arguments:
    -h, --help show this help message and exit
@@ -97,25 +96,25 @@ Optional arguments:
 - **Run with Default Settings:**
 
   ```bash
-  python whisper_groq_service.py
+  python myspeech_service.py
   ```
 
 - **Specify a Different Model and Enable Verbose Output:**
 
   ```bash
-  python whisper_groq_service.py --model distil-whisper-large-v3-en --verbose
+  python myspeech_service.py --model distil-whisper-large-v3-en --verbose
   ```
 
 - **Use an Initial Prompt:**
 
   ```bash
-  python whisper_groq_service.py --initial-prompt "The meeting notes are as follows:"
+  python myspeech_service.py --initial-prompt "The meeting notes are as follows:"
   ```
 
 - **Retrieve Context from Active Text Box:**
 
   ```bash
-  python whisper_groq_service.py --retrieve-context
+  python myspeech_service.py --retrieve-context
   ```
 
 ### Command-Line Interface (CLI) Tool
@@ -125,7 +124,7 @@ You can also use the CLI tool to transcribe audio files or record from the micro
 #### Transcribe Audio Files
 
 ```bash
-python whisper_groq.py audio1.wav audio2.mp3
+python myspeech.py audio1.wav audio2.mp3
 ```
 
 #### Record from Microphone
@@ -133,13 +132,13 @@ python whisper_groq.py audio1.wav audio2.mp3
 Record and transcribe audio from your microphone:
 
 ```bash
-python whisper_groq.py --record
+python myspeech.py --record
 ```
 
 #### Available Options
 
 ```text
-usage: whisper_groq.py [-h] [--model MODEL] [--language LANGUAGE]
+usage: myspeech.py [-h] [--model MODEL] [--language LANGUAGE]
                        [--output_dir OUTPUT_DIR] [--temperature TEMPERATURE]
                        [--record]
                        [--output_format {txt,vtt,srt,tsv,json,all}]
@@ -176,45 +175,46 @@ optional arguments:
 - **Transcribe Multiple Audio Files:**
 
   ```bash
-  python whisper_groq.py audio1.wav audio2.mp3
+  python myspeech.py audio1.wav audio2.mp3
   ```
 
 - **Record and Transcribe from Microphone:**
 
   ```bash
-  python whisper_groq.py --record
+  python myspeech.py --record
   ```
 
 - **Specify a Different Model:**
 
   ```bash
-  python whisper_groq.py --model distil-whisper-large-v3-en audio.wav
+  python myspeech.py --model distil-whisper-large-v3-en audio.wav
   ```
 
 - **Set Language:**
 
   ```bash
-  python whisper_groq.py --language en audio.wav
+  python myspeech.py --language en audio.wav
   ```
 
 - **Choose Output Directory and Format:**
 
   ```bash
-  python whisper_groq.py -o transcripts/ -f txt audio.wav
+  python myspeech.py -o transcripts/ -f txt audio.wav
   ```
 
 - **Translate Audio to English:**
 
   ```bash
-  python whisper_groq.py --task translate audio.wav
+  python myspeech.py --task translate audio.wav
   ```
 
 - **Enable Verbose Output:**
 
   ```bash
-  python whisper_groq.py --verbose audio.wav
+  python myspeech.py --verbose audio.wav
   ```
 
 ## License
 
 [MIT License](LICENSE)
+
