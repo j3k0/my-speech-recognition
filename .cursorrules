@@ -1,0 +1,3 @@
+We're writing this macOS app that will provide easy integration of speech recognition from Groq (using whisper models). Hit a shortcut, it records, release it and the text is pasted in the active app.
+
+We are using python.
