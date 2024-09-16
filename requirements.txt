@@ -1,0 +1,4 @@
+requests==2.31.0
+pyaudio==0.2.13
+webrtcvad==2.0.10
+numpy==1.21.0
