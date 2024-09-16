@@ -50,6 +50,8 @@ MAX_PROMPT_WORDS = 128
 key_state = {'control': False, 'v': False}
 last_shortcut_time = 0
 
+retrieve_context = False  # Add this line
+
 def hotkey_callback(proxy, event_type, event, refcon):
     global recording, stop_recording, key_state, last_shortcut_time
 
@@ -89,6 +91,7 @@ def hotkey_callback(proxy, event_type, event, refcon):
 
 def _paste_text(text):
     # Now paste the transcribed text
+    global keyboard_controller
     pyperclip.copy(text)
     keyboard_controller.press(Key.cmd)
     keyboard_controller.press('v')
@@ -96,13 +99,14 @@ def _paste_text(text):
     keyboard_controller.release(Key.cmd)
 
 def paste_text(text):
-    global keyboard_controller
-    # First, delete the "<!!!>" text
-    for _ in range(len("<!!!>")):
-        keyboard_controller.press(Key.backspace)
-        keyboard_controller.release(Key.backspace)
     _paste_text(text)
     
+def backspace_text(text):
+    # If we've exhausted all retries, return an empty string
+    global keyboard_controller
+    for _ in range(len(text)):
+        keyboard_controller.press(Key.backspace)
+        keyboard_controller.release(Key.backspace)
 
 def get_active_text(max_retries=3):
     global keyboard_controller, verbose
@@ -146,11 +150,8 @@ def get_active_text(max_retries=3):
             # First, delete the "<...>" text
             if verbose:
                 print(f"Text retrieved: {result}")
-            for _ in range(len("<...>")):
-                keyboard_controller.press(Key.backspace)
-                keyboard_controller.release(Key.backspace)
+            backspace_text("<...>")
             time.sleep(0.05)
-            keyboard_controller.type("<!!!>")
             return result
         else:
             print(f"Text: {result}")
@@ -158,11 +159,9 @@ def get_active_text(max_retries=3):
         # If we didn't get any text, wait a bit before retrying
         time.sleep(0.5)
 
-    # If we've exhausted all retries, return an empty string
-    for _ in range(len("<...>")):
-        keyboard_controller.press(Key.backspace)
-        keyboard_controller.release(Key.backspace)
+    backspace_text("<...>")
 
+    # If we've exhausted all retries, return an empty string
     return ""
 
 def truncate_prompt(prompt, max_words, max_chars=896):
@@ -175,14 +174,17 @@ def truncate_prompt(prompt, max_words, max_chars=896):
     return truncated
 
 def record_and_transcribe():
-    global recording, stop_recording, verbose
+    global recording, stop_recording, verbose, retrieve_context  # Add retrieve_context here
 
     try:
-        # Get text from active textbox
-        if verbose:
-          print("Getting active text")
-        active_text = get_active_text()
-        
+        active_text = ""
+        if retrieve_context:
+            # Get text from active textbox
+            if verbose:
+                print("Getting active text")
+            active_text = get_active_text()
+        keyboard_controller.type("<REC>")
+
         temp_file = "/tmp/audio_recording.wav"
         if os.path.exists(temp_file):
             os.remove(temp_file)
@@ -195,18 +197,22 @@ def record_and_transcribe():
             stop_recording_callback=lambda: stop_recording
         )
         
-        # Remove "<...>" and everything after it from active_text
         active_text = active_text.split("<...>")[0]
 
         # Display active text in verbose mode
         if verbose:
             print(f"Active text: {active_text}")
         
-        # Combine initial prompt with active text
-        combined_prompt = f"{initial_prompt or ''} {active_text}".strip()
+        # Combine initial prompt with active text only if retrieve_context is True
+        combined_prompt = initial_prompt or ""
+        if retrieve_context:
+            combined_prompt += f" {active_text}"
         
         # Truncate the combined prompt
         truncated_prompt = truncate_prompt(combined_prompt, MAX_PROMPT_WORDS)
+
+        backspace_text("<REC>")
+        keyboard_controller.type("<zzz>")
         
         process_audio(
             temp_file,
@@ -226,6 +232,7 @@ def record_and_transcribe():
             text = f.read().strip()
         
         print("Transcription copied to clipboard. Pasting...")
+        backspace_text("<zzz>")
         paste_text(text)
         
         print("Transcription pasted into active application.")
@@ -238,11 +245,12 @@ def record_and_transcribe():
     recording = False
 
 def main():
-    global model, initial_prompt, verbose, keyboard_controller, api_key
+    global model, initial_prompt, verbose, keyboard_controller, api_key, retrieve_context  # Add retrieve_context here
     parser = argparse.ArgumentParser(description="Whisper Groq Service")
     parser.add_argument("--model", default="distil-whisper-large-v3-en", help="Name of the model to use")
     parser.add_argument("--verbose", action="store_true", help="Enable verbose output")
     parser.add_argument("--initial-prompt", type=str, help="Initial prompt to include in transcription")
+    parser.add_argument("--retrieve-context", action="store_true", help="Retrieve context from active text box")  # Add this line
     args = parser.parse_args()
 
     api_key = os.environ.get("GROQ_API_KEY")
@@ -252,6 +260,7 @@ def main():
     verbose = args.verbose
     model = args.model
     initial_prompt = args.initial_prompt
+    retrieve_context = args.retrieve_context  # Add this line
     keyboard_controller = Controller()  # Initialize keyboard_controller here
 
     print("Whisper Groq Service is running.")
