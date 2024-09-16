@@ -1,34 +1,71 @@
-import os
-import threading
+from Quartz import (
+    CGEventTapCreate,
+    kCGHIDEventTap,
+    kCGHeadInsertEventTap,
+    kCGEventTapOptionDefault,
+    CGEventTapEnable,
+    CGEventTapPostEvent,
+    CFRunLoopAddSource,
+    CFRunLoopGetCurrent,
+    CFRunLoopRun,
+    CFMachPortCreateRunLoopSource,
+    CGEventGetIntegerValueField,
+    CGEventGetFlags,
+    kCGEventKeyDown,
+    kCGEventKeyUp,
+    kCGKeyboardEventKeycode,
+    kCGEventFlagMaskControl,
+    CGEventMaskBit,
+    kCFRunLoopCommonModes
+)
 import pyperclip
-from pynput import keyboard
+import threading
+import os
 import platform
 from whisper_groq_lib import record_audio_with_vad, process_audio
 
 recording = False
 stop_recording = False
-is_mac = platform.system() == 'Darwin'
+control_v_pressed = False  # New variable to track if Control+V is pressed
 
-def on_activate_v():
-    global recording, stop_recording
-    if not recording:
-        print("Shortcut Control+V pressed. Starting recording...")
-        recording = True
-        stop_recording = False
-        threading.Thread(target=record_and_transcribe).start()
-    else:
-        print("Shortcut Control+V pressed again. Stopping recording...")
-        stop_recording = True
+def hotkey_callback(proxy, event_type, event, refcon):
+    global recording, stop_recording, control_v_pressed
 
-def on_activate_q():
-    print("Shortcut Control+Q pressed. Exiting...")
-    return False  # Stop the listener
+    key_code = CGEventGetIntegerValueField(event, kCGKeyboardEventKeycode)
+    flags = CGEventGetFlags(event)
+
+    is_control_v = key_code == 9 and (flags & kCGEventFlagMaskControl)
+
+    if is_control_v:
+        if event_type == kCGEventKeyDown and not control_v_pressed:
+            control_v_pressed = True
+            if not recording:
+                print("Control+V pressed. Starting recording...")
+                recording = True
+                stop_recording = False
+                threading.Thread(target=record_and_transcribe).start()
+            # Suppress the event
+            return None
+
+        elif event_type == kCGEventKeyUp and control_v_pressed:
+            control_v_pressed = False
+            if recording:
+                print("Control+V released. Stopping recording...")
+                stop_recording = True
+            # Suppress the event
+            return None
+        return None
+
+    # Allow other events
+    return event
 
 def paste_text():
-    keyboard_controller = keyboard.Controller()
-    with keyboard_controller.pressed(keyboard.Key.cmd if is_mac else keyboard.Key.ctrl):
-        keyboard_controller.press('v')
-        keyboard_controller.release('v')
+    from pynput.keyboard import Key, Controller
+    keyboard_controller = Controller()
+    keyboard_controller.press(Key.cmd)
+    keyboard_controller.press('v')
+    keyboard_controller.release('v')
+    keyboard_controller.release(Key.cmd)
 
 def record_and_transcribe():
     global recording, stop_recording
@@ -85,13 +122,26 @@ def record_and_transcribe():
 def main():
     print("Whisper Groq Service is running.")
     print("Press Control+V to start/stop recording.")
-    print("Press Control+Q to quit the application.")
 
-    with keyboard.GlobalHotKeys({
-            '<ctrl>+v': on_activate_v,
-            '<ctrl>+q': on_activate_q
-    }) as h:
-        h.join()
+    event_mask = CGEventMaskBit(kCGEventKeyDown) | CGEventMaskBit(kCGEventKeyUp)
+
+    tap = CGEventTapCreate(
+        kCGHIDEventTap,
+        kCGHeadInsertEventTap,
+        kCGEventTapOptionDefault,
+        event_mask,
+        hotkey_callback,
+        None
+    )
+
+    if not tap:
+        print("Failed to create event tap.")
+        exit(1)
+
+    run_loop_source = CFMachPortCreateRunLoopSource(None, tap, 0)
+    CFRunLoopAddSource(CFRunLoopGetCurrent(), run_loop_source, kCFRunLoopCommonModes)
+    CGEventTapEnable(tap, True)
+    CFRunLoopRun()
 
 if __name__ == "__main__":
     main()
