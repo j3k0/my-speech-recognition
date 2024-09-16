@@ -24,6 +24,8 @@ import os
 import platform
 from whisper_groq_lib import record_audio_with_vad, process_audio
 import argparse  # Added import for argument parsing
+import re
+from pynput.keyboard import Key, Controller  # Add this import
 
 # Initialize variables for model, initial_prompt, and verbose
 recording = False
@@ -33,6 +35,9 @@ control_v_pressed = False
 model = None            # Add this line
 initial_prompt = None   # Add this line
 verbose = False         # Add this line
+keyboard_controller = None  # Add this line
+
+MAX_PROMPT_WORDS = 128
 
 def hotkey_callback(proxy, event_type, event, refcon):
     global recording, stop_recording, control_v_pressed
@@ -73,8 +78,34 @@ def paste_text():
     keyboard_controller.release('v')
     keyboard_controller.release(Key.cmd)
 
+def get_active_text():
+    # Copy text from active textbox
+    keyboard_controller.press(Key.cmd)
+    keyboard_controller.press('a')
+    keyboard_controller.release('a')
+    keyboard_controller.release(Key.cmd)
+    
+    keyboard_controller.press(Key.cmd)
+    keyboard_controller.press('c')
+    keyboard_controller.release('c')
+    keyboard_controller.release(Key.cmd)
+
+    # Unselect the text and return to the original cursor position
+    keyboard_controller.press(Key.left)
+    keyboard_controller.release(Key.left)
+    keyboard_controller.press(Key.right)
+    keyboard_controller.release(Key.right)
+    
+    return pyperclip.paste()
+
+def truncate_prompt(prompt, max_words):
+    words = re.findall(r'\S+', prompt)
+    if len(words) > max_words:
+        return ' '.join(words[:max_words])
+    return prompt
+
 def record_and_transcribe():
-    global recording, stop_recording, model, initial_prompt, verbose  # Declare globals
+    global recording, stop_recording, model, initial_prompt, verbose
     
     temp_file = "/tmp/audio_recording.wav"
     
@@ -94,6 +125,19 @@ def record_and_transcribe():
         return
 
     try:
+        # Get text from active textbox
+        active_text = get_active_text()
+
+        # Display active text in verbose mode
+        if verbose:
+            print(f"Active text: {active_text}")
+        
+        # Combine initial prompt with active text
+        combined_prompt = f"{initial_prompt or ''} {active_text}".strip()
+        
+        # Truncate the combined prompt
+        truncated_prompt = truncate_prompt(combined_prompt, MAX_PROMPT_WORDS)
+        
         process_audio(
             temp_file,
             api_key,
@@ -102,7 +146,7 @@ def record_and_transcribe():
             temperature=0,
             task="transcribe",
             word_timestamps=False,
-            initial_prompt=initial_prompt,   # Use specified initial prompt
+            initial_prompt=truncated_prompt,   # Use the truncated prompt
             output_dir="/tmp",
             output_format="txt",
             verbose=verbose                  # Use specified verbosity
@@ -126,7 +170,7 @@ def record_and_transcribe():
             os.remove("/tmp/audio_recording.txt")
 
 def main():
-    global model, initial_prompt, verbose  # Declare globals
+    global model, initial_prompt, verbose, keyboard_controller  # Add keyboard_controller
     parser = argparse.ArgumentParser(description="Whisper Groq Service")
     parser.add_argument("--model", default="distil-whisper-large-v3-en", help="Name of the model to use")
     parser.add_argument("--verbose", action="store_true", help="Enable verbose output")
@@ -136,6 +180,7 @@ def main():
     verbose = args.verbose
     model = args.model
     initial_prompt = args.initial_prompt
+    keyboard_controller = Controller()  # Initialize keyboard_controller here
 
     print("Whisper Groq Service is running.")
     print("Press Control+V to start/stop recording.")
