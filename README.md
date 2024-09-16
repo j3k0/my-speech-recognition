@@ -5,7 +5,7 @@ An easy-to-use macOS application **and command-line tool** that integrates with 
 ## Features
 
 - **Seamless Integration**: Works with any macOS application that accepts text input.
-- **Shortcut Activation**: Use a keyboard shortcut to start and stop recording.
+- **Shortcut Activation**: Use a keyboard shortcut to start recording.
 - **Real-Time Transcription**: Utilizes Groq's Whisper models for fast and accurate speech-to-text conversion.
 - **Contextual Awareness**: Optionally retrieve context from the active text box to improve transcription accuracy.
 - **Customizable**: Adjust settings like model selection, verbosity, and initial prompts.
@@ -77,7 +77,7 @@ Run the main service script:
 python whisper_groq_service.py
 ```
 
-This will start the application in the background. Press **Control+V** to start recording; release to stop recording. The transcribed text will be pasted into your active application.
+This will start the application in the background. Press **Control+V** to start recording. <REC> will appear while the recording takes place, until a silence is detected. The transcribed text will be pasted into your active application.
 
 **Available Options** for `whisper_groq_service.py`:
 
