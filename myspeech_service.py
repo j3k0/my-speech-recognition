@@ -174,23 +174,25 @@ def truncate_prompt(prompt, max_words, max_chars=896):
     return truncated
 
 def record_and_transcribe():
-    global recording, stop_recording, verbose, retrieve_context  # Add retrieve_context here
+    global recording, stop_recording, verbose, retrieve_context
 
     try:
         active_text = ""
         if retrieve_context:
-            # Get text from active textbox
             if verbose:
                 print("Getting active text")
             active_text = get_active_text()
         keyboard_controller.type("<REC>")
 
-        temp_file = "/tmp/audio_recording.wav"
-        if os.path.exists(temp_file):
-            os.remove(temp_file)
+        the_random = os.urandom(8).hex()
+        temp_audio_file = f"/tmp/audio_recording_{the_random}.wav"
+        temp_text_file = f"/tmp/audio_recording_{the_random}.txt"
+
+        if os.path.exists(temp_audio_file):
+            os.remove(temp_audio_file)
         
         record_audio_with_vad(
-            temp_file,
+            temp_audio_file,
             verbose=True, 
             silence_threshold=1.0, 
             silence_duration=1.0,
@@ -199,36 +201,33 @@ def record_and_transcribe():
         
         active_text = active_text.split("<...>")[0]
 
-        # Display active text in verbose mode
         if verbose:
             print(f"Active text: {active_text}")
         
-        # Combine initial prompt with active text only if retrieve_context is True
         combined_prompt = initial_prompt or ""
         if retrieve_context:
             combined_prompt += f" {active_text}"
         
-        # Truncate the combined prompt
         truncated_prompt = truncate_prompt(combined_prompt, MAX_PROMPT_WORDS)
 
         backspace_text("<REC>")
         keyboard_controller.type("<zzz>")
         
         process_audio(
-            temp_file,
+            temp_audio_file,
             api_key,
-            model=model,                     # Use specified model
+            model=model,
             language=None,
             temperature=0,
             task="transcribe",
             word_timestamps=False,
-            initial_prompt=truncated_prompt,   # Use the truncated prompt
+            initial_prompt=truncated_prompt,
             output_dir="/tmp",
             output_format="txt",
-            verbose=verbose                  # Use specified verbosity
+            verbose=verbose
         )
         
-        with open("/tmp/audio_recording.txt", "r") as f:
+        with open(temp_text_file, "r") as f:
             text = f.read().strip()
         
         print("Transcription copied to clipboard. Pasting...")
@@ -236,6 +235,10 @@ def record_and_transcribe():
         paste_text(text)
         
         print("Transcription pasted into active application.")
+
+        # Clean up temporary files
+        os.remove(temp_audio_file)
+        os.remove(temp_text_file)
 
     except Exception as e:
         print(f"Error: {e}")
@@ -245,7 +248,7 @@ def record_and_transcribe():
     recording = False
 
 def main():
-    global model, initial_prompt, verbose, keyboard_controller, api_key, retrieve_context  # Add retrieve_context here
+    global model, initial_prompt, verbose, keyboard_controller, api_key, retrieve_context
     parser = argparse.ArgumentParser(description="Whisper Groq Service")
     parser.add_argument("--model", default="distil-whisper-large-v3-en", help="Name of the model to use")
     parser.add_argument("--verbose", action="store_true", help="Enable verbose output")
