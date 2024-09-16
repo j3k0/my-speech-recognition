@@ -106,6 +106,9 @@ def record_audio_with_vad(output_file, verbose=False, silence_threshold=1.0, sil
     stream.close()
     p.terminate()
 
+    if verbose:
+        print(f"Recording finished. Saving to {output_file}")
+
     # Write the recorded data to a WAV file
     wf = wave.open(output_file, 'wb')
     wf.setnchannels(CHANNELS)
@@ -113,9 +116,6 @@ def record_audio_with_vad(output_file, verbose=False, silence_threshold=1.0, sil
     wf.setframerate(RATE)
     wf.writeframes(b''.join(frames))
     wf.close()
-
-    if verbose:
-        print(f"Recording finished. Saving to {output_file}")
 
 def save_output(transcription, output_file, format, verbose=False):
     base_name, _ = os.path.splitext(output_file)
