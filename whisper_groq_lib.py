@@ -11,12 +11,19 @@ from struct import pack
 import csv
 
 def preprocess_audio(input_file, output_file, verbose=False):
+    # Remove the output file if it exists
+    if os.path.exists(output_file):
+        os.remove(output_file)
+        if verbose:
+            print(f"Removed existing output file: {output_file}")
     command = [
         'ffmpeg',
         '-i', input_file,
         '-ar', '16000',
         '-ac', '1',
         '-map', '0:a:',
+        '-b:a', '32k',  # Reduce bitrate to 32 kbps
+        '-acodec', 'libmp3lame',  # Use MP3 codec for good compression and compatibility
         output_file
     ]
     if verbose:
@@ -169,7 +176,7 @@ def process_audio(audio_file, api_key, model, language, temperature, task, word_
         print(f"\nProcessing {audio_file}...")
     
     # Preprocess audio
-    preprocessed_file = f"{os.path.splitext(audio_file)[0]}_preprocessed.wav"
+    preprocessed_file = f"{os.path.splitext(audio_file)[0]}_preprocessed.mp3"
     if verbose:
         print(f"Preprocessing audio: {audio_file} -> {preprocessed_file}")
     preprocess_audio(audio_file, preprocessed_file, verbose)
