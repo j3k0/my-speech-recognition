@@ -32,9 +32,15 @@ from myspeech_lib import record_audio_with_vad, process_audio
 import argparse
 import re
 import time
-from AppKit import NSPasteboard, NSStringPboardType
+from AppKit import NSPasteboard, NSStringPboardType, NSStatusBar, NSVariableStatusItemLength, NSMenu, NSMenuItem, NSApplication, NSApp
 import logging
 from contextlib import contextmanager
+# fix NameError: name 'NSObject' is not defined
+from Foundation import NSObject
+import objc
+
+PROCESSING_MARK = '[...]'
+RECORDING_MARK = '[REC]'
 
 class MacOSKeyboardController:
     def __init__(self):
@@ -79,6 +85,9 @@ class MacOSKeyboardController:
                     for mod in modifiers:
                         flags |= self.modifier_keys.get(mod.lower(), 0)
                     CGEventSetFlags(event, flags)
+                else:
+                    # Ensure no modifiers are applied when not specified
+                    CGEventSetFlags(event, 0)
                 CGEventPost(kCGHIDEventTap, event)
         except Exception as e:
             self.logger.error(f"Error pressing key {key}: {str(e)}")
@@ -124,6 +133,8 @@ class MacOSKeyboardController:
             '>': ('shift', '.'),
             '?': ('shift', '/'),
             '~': ('shift', '`'),
+            '}': ('shift', ']'),
+            '{': ('shift', '[')
         }
         if char in special_chars:
             self.type_with_modifiers(special_chars[char][1], [special_chars[char][0]])
@@ -132,14 +143,15 @@ class MacOSKeyboardController:
 
     def type_string(self, string):
         for char in string:
-            if char.isalnum() or char in [' ', '\n', '\t']:
+            # char without modifiers
+            if char.isalnum() or char in [' ', '\n', '\t', '.', ',', '!', '?', '-', '=', '[', ']', ';', '\'']:
                 if char.isupper():
                     self.type_with_modifiers(char.lower(), ['shift'])
                 else:
                     self.press_and_release(char)  # Ensure lowercase
             else:
                 self.type_special_char(char)
-            time.sleep(0.01)  # Small delay between keystrokes
+            # time.sleep(0.01)  # Small delay between keystrokes
 
     def press_and_release(self, key, modifiers=None):
         self.press_key(key, modifiers)
@@ -173,6 +185,7 @@ model = None
 initial_prompt = None
 verbose = False
 keyboard_controller = MacOSKeyboardController()  # Initialize at the top level
+delegate = None
 
 MAX_PROMPT_WORDS = 128
 
@@ -180,6 +193,11 @@ key_state = {'control': False, 'v': False}
 last_shortcut_time = 0
 
 retrieve_context = False
+
+def update_status_title(title):
+    delegate.performSelectorOnMainThread_withObject_waitUntilDone_(
+        'setStatusTitle:', title, False
+    )
 
 def hotkey_callback(proxy, event_type, event, refcon):
     global recording, stop_recording, last_shortcut_time
@@ -213,7 +231,7 @@ def _paste_text(text, verbose):
         print(f"\"{text}\" copied to clipboard.")
         print("pasting...")
     keyboard_controller.key_combination('cmd', 'v')
-    time.sleep(0.1)  # Give some time for the paste operation to complete
+    # time.sleep(0.1)  # Give some time for the paste operation to complete
     if verbose:
         print("Transcription pasted into active application.")
 
@@ -225,52 +243,56 @@ def backspace_text(text):
     for _ in range(len(text)):
         keyboard_controller.press_and_release('backspace')
 
-def get_active_text(max_retries=3):
+def get_active_text(max_retries=1):
     global keyboard_controller, verbose
 
     if verbose:
         print("Retrieving active text..")
 
+    original_clipboard_content = paste_from_clipboard()
+
     # Clear the clipboard
-    keyboard_controller.type_string('<...>')
     copy_to_clipboard('')
-
-    for attempt in range(max_retries):
-        if verbose:
-            print(f"Attempt number {attempt}")
-        # Select all text before the cursor
-        with keyboard_controller.hold_keys('shift', 'cmd'):
-            keyboard_controller.press_and_release('up')
-        time.sleep(0.05)
-        
-        # Copy the selected text
-        keyboard_controller.key_combination('cmd', 'c')
-        time.sleep(0.05)
-
-        # Wait for a short duration to ensure the text is copied
-        result = paste_from_clipboard()
-        time.sleep(0.05)
-
-        # Move cursor back to the end of "<...>"
-        keyboard_controller.press_and_release('right')
-        
-        # Check if we got any text (excluding our marker)
-        if result:
+    time.sleep(0.05)
+    
+    try:
+        for attempt in range(max_retries):
             if verbose:
-                print(f"Text retrieved: {result}")
-            backspace_text("<...>")
-            time.sleep(0.05)
-            return result
-        else:
-            print(f"Text: {result}")
+                print(f"Attempt number {attempt}")
+            
+            # Select text from cursor to start of document
+            keyboard_controller.key_combination('shift', 'cmd', 'up')
+            time.sleep(0.01)
+            
+            # Copy the selected text
+            keyboard_controller.key_combination('cmd', 'c')
+            time.sleep(0.1)
+            
+            # Deselect by pressing right arrow
+            keyboard_controller.press_and_release('right')
+            time.sleep(0.01)
 
-        # If we didn't get any text, wait a bit before retrying
-        time.sleep(0.5)
+            # Get the copied text
+            result = paste_from_clipboard()
+            
+            # Check if we got any text
+            if result:
+                if verbose:
+                    print(f"Text retrieved: {result}")
+                return result
+            else:
+                if verbose:
+                    print("No text retrieved")
 
-    backspace_text("<...>")
+            # If we didn't get any text, wait a bit before retrying
+            time.sleep(0.1)
 
-    # If we've exhausted all retries, return an empty string
-    return ""
+        # If we've exhausted all retries, return an empty string
+        return ""
+    
+    finally:
+        # Restore the original clipboard content
+        copy_to_clipboard(original_clipboard_content)
 
 def truncate_prompt(prompt, max_words, max_chars=896):
     words = re.findall(r'\S+', prompt)
@@ -288,7 +310,8 @@ def record_and_transcribe():
 
     try:
         active_text = get_active_text() if retrieve_context else ""
-        keyboard_controller.type_string("<REC>")
+        keyboard_controller.type_string(RECORDING_MARK)
+        update_status_title("🔴")  # Update status bar icon when recording starts
 
         the_random = os.urandom(8).hex()
         temp_audio_file = f"/tmp/audio_recording_{the_random}.wav"
@@ -305,7 +328,7 @@ def record_and_transcribe():
             stop_recording_callback=lambda: stop_recording
         )
         
-        active_text = active_text.split("<...>")[0]
+        active_text = active_text.split(PROCESSING_MARK)[0]
 
         if verbose:
             print(f"Active text: {active_text}")
@@ -316,8 +339,9 @@ def record_and_transcribe():
         
         truncated_prompt = truncate_prompt(combined_prompt, MAX_PROMPT_WORDS)
 
-        backspace_text("<REC>")
-        keyboard_controller.type_string("<zzz>")
+        backspace_text(RECORDING_MARK)
+        keyboard_controller.type_string(PROCESSING_MARK)
+        update_status_title("⏳")  # Update status bar icon when recording starts
         
         process_audio(
             temp_audio_file,
@@ -334,14 +358,14 @@ def record_and_transcribe():
         )
         
         with open(temp_text_file, "r") as f:
-            text = f.read().strip()
+            text = f.read()
         
         if verbose:
             print("Transcription:")
             print(text)
             print()
 
-        backspace_text("<zzz>")
+        backspace_text(PROCESSING_MARK)
         paste_text(text, verbose)
 
         # Clean up temporary files
@@ -355,6 +379,7 @@ def record_and_transcribe():
 
     finally:
         recording = False
+        update_status_title("🎙")  # Update status bar icon when recording stops
         if verbose:
             print(f"Restoring original clipboard content: {original_clipboard_content}")
         time.sleep(0.5)
@@ -369,30 +394,28 @@ def paste_from_clipboard():
     pasteboard = NSPasteboard.generalPasteboard()
     return pasteboard.stringForType_(NSStringPboardType)
 
-def main():
-    global model, initial_prompt, verbose, keyboard_controller, api_key, retrieve_context
-    parser = argparse.ArgumentParser(description="Whisper Groq Service")
-    parser.add_argument("--model", default="distil-whisper-large-v3-en", help="Name of the model to use")
-    parser.add_argument("--verbose", action="store_true", help="Enable verbose output")
-    parser.add_argument("--initial-prompt", type=str, help="Initial prompt to include in transcription")
-    parser.add_argument("--retrieve-context", action="store_true", help="Retrieve context from active text box")  # Add this line
-    args = parser.parse_args()
+class AppDelegate(NSObject):
+    def init(self):
+        self = objc.super(AppDelegate, self).init()
+        if self is None:
+            return None
+        self.statusItem = NSStatusBar.systemStatusBar().statusItemWithLength_(NSVariableStatusItemLength)
+        self.statusItem.setTitle_("🎙")
+        self.menu = NSMenu.alloc().init()
+        self.menuItem = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("Quit", "terminate:", "")
+        self.menu.addItem_(self.menuItem)
+        self.statusItem.setMenu_(self.menu)
+        return self
 
-    api_key = os.environ.get("GROQ_API_KEY")
-    if not api_key:
-        raise ValueError("GROQ_API_KEY environment variable is not set")
+    def setStatusTitle_(self, title):
+        self.statusItem.setTitle_(title)
 
-    verbose = args.verbose
-    model = args.model
-    initial_prompt = args.initial_prompt
-    retrieve_context = args.retrieve_context  # Add this line
-    keyboard_controller = MacOSKeyboardController()  # Initialize keyboard_controller here
-
-    print("Whisper Groq Service is running.")
-    print("Press Control+V to start/stop recording.")
-
-    event_mask = CGEventMaskBit(kCGEventKeyDown) | CGEventMaskBit(kCGEventKeyUp) | CGEventMaskBit(kCGEventFlagsChanged)
-
+def event_listener():
+    event_mask = (
+        CGEventMaskBit(kCGEventKeyDown) |
+        CGEventMaskBit(kCGEventKeyUp) |
+        CGEventMaskBit(kCGEventFlagsChanged)
+    )
     tap = CGEventTapCreate(
         kCGHIDEventTap,
         kCGHeadInsertEventTap,
@@ -402,7 +425,7 @@ def main():
         None
     )
 
-    if not tap:
+    if tap is None:
         print("Failed to create event tap.")
         exit(1)
 
@@ -410,6 +433,39 @@ def main():
     CFRunLoopAddSource(CFRunLoopGetCurrent(), run_loop_source, kCFRunLoopCommonModes)
     CGEventTapEnable(tap, True)
     CFRunLoopRun()
+
+def main():
+    global model, initial_prompt, verbose, keyboard_controller, api_key, retrieve_context, delegate
+    parser = argparse.ArgumentParser(description="Whisper Groq Service")
+    parser.add_argument("--model", default="distil-whisper-large-v3-en", help="Name of the model to use")
+    parser.add_argument("--verbose", action="store_true", help="Enable verbose output")
+    parser.add_argument("--initial-prompt", type=str, help="Initial prompt to include in transcription")
+    parser.add_argument("--retrieve-context", action="store_true", help="Retrieve context from active text box")
+    args = parser.parse_args()
+
+    api_key = os.environ.get("GROQ_API_KEY")
+    if not api_key:
+        raise ValueError("GROQ_API_KEY environment variable is not set")
+
+    verbose = args.verbose
+    model = args.model
+    initial_prompt = args.initial_prompt
+    retrieve_context = args.retrieve_context
+    keyboard_controller = MacOSKeyboardController()
+
+    # Initialize the app and delegate
+    app = NSApplication.sharedApplication()
+    delegate = AppDelegate.alloc().init()
+    app.setDelegate_(delegate)
+
+    print("Whisper Groq Service is running.")
+    print("Press Control+V to start/stop recording.")
+
+    # Start the event listener in a separate thread
+    threading.Thread(target=event_listener, daemon=True).start()
+
+    # Run the app
+    app.run()
 
 if __name__ == "__main__":
     main()
