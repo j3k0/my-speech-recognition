@@ -22,7 +22,6 @@ from Quartz import (
     kCGEventFlagMaskAlternate,
     kCGEventFlagMaskCommand
 )
-import pyperclip
 import threading
 import os
 import platform
@@ -31,6 +30,7 @@ import argparse  # Added import for argument parsing
 import re
 from pynput.keyboard import Key, Controller  # Add this import
 import time  # Add this import at the top of the file
+from AppKit import NSPasteboard, NSStringPboardType  # Added import for native clipboard functionality
 
 
 # Initialize variables for model, initial_prompt, and verbose
@@ -53,53 +53,47 @@ last_shortcut_time = 0
 retrieve_context = False  # Add this line
 
 def hotkey_callback(proxy, event_type, event, refcon):
-    global recording, stop_recording, key_state, last_shortcut_time
+    global recording, stop_recording, last_shortcut_time
 
     key_code = CGEventGetIntegerValueField(event, kCGKeyboardEventKeycode)
     flags = CGEventGetFlags(event)
     
-    # Interpret the flags
     is_control_pressed = bool(flags & kCGEventFlagMaskControl)
+    is_v_pressed = key_code == 9 and event_type == kCGEventKeyDown
 
-    is_v = key_code == 9  # 'V' key code
-    key_state['control'] = is_control_pressed
-    if is_v:
-        key_state['v'] = event_type == kCGEventKeyDown
-
-    if key_state['control'] and key_state['v']:
+    if is_control_pressed and is_v_pressed:
         last_shortcut_time = time.time()
         if not recording:
             print("Control+V pressed. Starting recording...")
             recording = True
             stop_recording = False
             threading.Thread(target=record_and_transcribe).start()
-            # record_and_transcribe()
             return None
-  # elif not key_state['control'] and not key_state['v']:
-  #     if recording and not stop_recording:
-  #           print("Control+V released. Stopping recording...")
-  #           stop_recording = True
-  #           return None
 
     # Block events for some time after a shortcut detection
     if time.time() - last_shortcut_time < 0.3:
-        if is_v:
+        if key_code == 9:  # 'V' key
             return None
 
-    # Pass through all other events
     return event
 
-def _paste_text(text):
+def _paste_text(text, verbose):
     # Now paste the transcribed text
     global keyboard_controller
-    pyperclip.copy(text)
+    copy_to_clipboard(text)
+    if verbose:
+        print(f"\"{text}\" copied to clipboard.")
+    if verbose:
+        print("pasting...")
     keyboard_controller.press(Key.cmd)
     keyboard_controller.press('v')
     keyboard_controller.release('v')
     keyboard_controller.release(Key.cmd)
+    if verbose:
+        print("Transcription pasted into active application.")
 
-def paste_text(text):
-    _paste_text(text)
+def paste_text(text, verbose):
+    _paste_text(text, verbose)
     
 def backspace_text(text):
     # If we've exhausted all retries, return an empty string
@@ -116,7 +110,7 @@ def get_active_text(max_retries=3):
 
     # Clear the clipboard
     keyboard_controller.type('<...>')
-    pyperclip.copy('')
+    copy_to_clipboard('')
 
     for attempt in range(max_retries):
         if verbose:
@@ -138,7 +132,7 @@ def get_active_text(max_retries=3):
         time.sleep(0.05)
 
         # Wait for a short duration to ensure the text is copied
-        result = pyperclip.paste()
+        result = paste_from_clipboard()
         time.sleep(0.05)
 
         # Move cursor back to the end of "<...>"
@@ -175,13 +169,11 @@ def truncate_prompt(prompt, max_words, max_chars=896):
 
 def record_and_transcribe():
     global recording, stop_recording, verbose, retrieve_context
+    
+    original_clipboard_content = paste_from_clipboard()
 
     try:
-        active_text = ""
-        if retrieve_context:
-            if verbose:
-                print("Getting active text")
-            active_text = get_active_text()
+        active_text = get_active_text() if retrieve_context else ""
         keyboard_controller.type("<REC>")
 
         the_random = os.urandom(8).hex()
@@ -193,7 +185,7 @@ def record_and_transcribe():
         
         record_audio_with_vad(
             temp_audio_file,
-            verbose=True, 
+            verbose=verbose, 
             silence_threshold=1.0, 
             silence_duration=1.0,
             stop_recording_callback=lambda: stop_recording
@@ -230,11 +222,13 @@ def record_and_transcribe():
         with open(temp_text_file, "r") as f:
             text = f.read().strip()
         
-        print("Transcription copied to clipboard. Pasting...")
+        if verbose:
+            print("Transcription:")
+            print(text)
+            print()
+
         backspace_text("<zzz>")
-        paste_text(text)
-        
-        print("Transcription pasted into active application.")
+        paste_text(text, verbose)
 
         # Clean up temporary files
         os.remove(temp_audio_file)
@@ -244,8 +238,22 @@ def record_and_transcribe():
         print(f"Error: {e}")
         print("Failed to record and transcribe.")
         paste_text("")
-    
-    recording = False
+
+    finally:
+        recording = False
+        if verbose:
+            print(f"Restoring original clipboard content: {original_clipboard_content}")
+        time.sleep(0.5)
+        copy_to_clipboard(original_clipboard_content)
+
+def copy_to_clipboard(text):
+    pasteboard = NSPasteboard.generalPasteboard()
+    pasteboard.clearContents()
+    pasteboard.setString_forType_(text, NSStringPboardType)
+
+def paste_from_clipboard():
+    pasteboard = NSPasteboard.generalPasteboard()
+    return pasteboard.stringForType_(NSStringPboardType)
 
 def main():
     global model, initial_prompt, verbose, keyboard_controller, api_key, retrieve_context
