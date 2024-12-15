@@ -28,7 +28,7 @@ from Quartz import (
 import threading
 import os
 import platform
-from myspeech_lib import record_audio_with_vad, process_audio
+from myspeech_lib import record_audio_with_vad, process_audio, DEFAULT_SILENCE_DURATION
 import argparse
 import re
 import time
@@ -317,19 +317,17 @@ def record_and_transcribe():
         temp_audio_file = f"/tmp/audio_recording_{the_random}.wav"
         temp_text_file = f"/tmp/audio_recording_{the_random}.txt"
 
-        if os.path.exists(temp_audio_file):
-            os.remove(temp_audio_file)
-        
-        record_audio_with_vad(
+        # Record audio and get segment files
+        segment_files = record_audio_with_vad(
             temp_audio_file,
             verbose=verbose, 
             silence_threshold=1.0, 
-            silence_duration=1.0,
+            silence_duration=DEFAULT_SILENCE_DURATION,
             stop_recording_callback=lambda: stop_recording
         )
         
         active_text = active_text.split(PROCESSING_MARK)[0]
-
+        
         if verbose:
             print(f"Active text: {active_text}")
         
@@ -341,45 +339,54 @@ def record_and_transcribe():
 
         backspace_text(RECORDING_MARK)
         keyboard_controller.type_string(PROCESSING_MARK)
-        update_status_title("⏳")  # Update status bar icon when recording starts
-        
-        process_audio(
-            temp_audio_file,
-            api_key,
-            model=model,
-            language=None,
-            temperature=0,
-            task="transcribe",
-            word_timestamps=False,
-            initial_prompt=truncated_prompt,
-            output_dir="/tmp",
-            output_format="txt",
-            verbose=verbose
-        )
-        
-        with open(temp_text_file, "r") as f:
-            text = f.read()
+        update_status_title("⏳")
+
+        # Process each segment and combine results
+        full_text = ""
+        for segment_file in segment_files:
+            process_audio(
+                segment_file,
+                api_key,
+                model=model,
+                language=None,
+                temperature=0,
+                task="transcribe",
+                word_timestamps=False,
+                initial_prompt=truncated_prompt,
+                output_dir="/tmp",
+                output_format="txt",
+                verbose=verbose
+            )
+            
+            segment_text_file = f"{os.path.splitext(segment_file)[0]}.txt"
+            with open(segment_text_file, "r") as f:
+                segment_text = f.read()
+                if (full_text == ""):
+                    full_text = segment_text.strip()
+                else:
+                    full_text += segment_text
+                truncated_prompt = truncate_prompt(truncated_prompt + segment_text, MAX_PROMPT_WORDS)
+            
+            # Clean up segment files
+            os.remove(segment_file)
+            os.remove(segment_text_file)
         
         if verbose:
-            print("Transcription:")
-            print(text)
+            print("Full transcription:")
+            print(full_text)
             print()
 
         backspace_text(PROCESSING_MARK)
-        paste_text(text, verbose)
-
-        # Clean up temporary files
-        os.remove(temp_audio_file)
-        os.remove(temp_text_file)
+        paste_text(full_text, verbose)
 
     except Exception as e:
         print(f"Error: {e}")
         print("Failed to record and transcribe.")
-        paste_text("")
+        paste_text("", verbose)
 
     finally:
         recording = False
-        update_status_title("🎙")  # Update status bar icon when recording stops
+        update_status_title("🎙")
         if verbose:
             print(f"Restoring original clipboard content: {original_clipboard_content}")
         time.sleep(0.5)
