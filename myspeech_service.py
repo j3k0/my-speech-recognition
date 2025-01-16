@@ -1,6 +1,7 @@
 from Quartz import (
     CGEventTapCreate,
     kCGHIDEventTap,
+    kCGSessionEventTap,
     kCGHeadInsertEventTap,
     kCGEventTapOptionDefault,
     CGEventTapEnable,
@@ -23,7 +24,7 @@ from Quartz import (
     kCGEventFlagMaskCommand,
     CGEventCreateKeyboardEvent,
     CGEventSetFlags,
-    CGEventPost
+    CGEventPost,
 )
 import threading
 import os
@@ -199,19 +200,42 @@ def update_status_title(title):
         'setStatusTitle:', title, False
     )
 
+def get_key_code_map():
+    return {
+        'A': 0, 'S': 1, 'D': 2, 'F': 3, 'H': 4, 'G': 5, 'Z': 6, 'X': 7,
+        'C': 8, 'V': 9, 'B': 11, 'Q': 12, 'W': 13, 'E': 14, 'R': 15,
+        'Y': 16, 'T': 17, '1': 18, '2': 19, '3': 20, '4': 21,
+        '6': 22, '5': 23, '=': 24, '9': 25, '7': 26, '-': 27,
+        '8': 28, '0': 29, ']': 30, 'O': 31, 'U': 32, '[': 33,
+        'I': 34, 'P': 35, 'RETURN': 36, 'L': 37, 'J': 38, '\'': 39,
+        'K': 40, ';': 41, '\\': 42, ',': 43, '/': 44, 'N': 45,
+        'M': 46, '.': 47, 'TAB': 48, 'SPACE': 49, '`': 50,
+        'DELETE': 51, 'ENTER': 52, 'ESCAPE': 53,
+        'COMMAND': 55, 'SHIFT': 56, 'CAPSLOCK': 57, 'OPTION': 58,
+        'CONTROL': 59, 'RIGHT_SHIFT': 60, 'RIGHT_OPTION': 61,
+        'RIGHT_CONTROL': 62, 'FUNCTION': 63
+    }
+
+def get_key_code(key):
+    key_codes = get_key_code_map()
+    return key_codes.get(key.upper())
+
 def hotkey_callback(proxy, event_type, event, refcon):
     global recording, stop_recording, last_shortcut_time
 
     key_code = CGEventGetIntegerValueField(event, kCGKeyboardEventKeycode)
     flags = CGEventGetFlags(event)
     
+    # Vérifier si Control est pressé
     is_control_pressed = bool(flags & kCGEventFlagMaskControl)
-    is_v_pressed = key_code == 9 and event_type == kCGEventKeyDown
+    # Vérifier si c'est un événement KeyDown pour V
+    is_v_pressed = key_code == get_key_code('V') and event_type == kCGEventKeyDown
 
     if is_control_pressed and is_v_pressed:
         last_shortcut_time = time.time()
         if not recording:
-            print("Control+V pressed. Starting recording...")
+            if verbose:
+                print("Control+V pressed. Starting recording...")
             recording = True
             stop_recording = False
             threading.Thread(target=record_and_transcribe).start()
@@ -219,7 +243,7 @@ def hotkey_callback(proxy, event_type, event, refcon):
 
     # Block events for some time after a shortcut detection
     if time.time() - last_shortcut_time < 0.3:
-        if key_code == 9:  # 'V' key
+        if key_code == get_key_code('V'):
             return None
 
     return event
@@ -418,27 +442,50 @@ class AppDelegate(NSObject):
         self.statusItem.setTitle_(title)
 
 def event_listener():
+    # Définir un masque d'événements plus large
     event_mask = (
         CGEventMaskBit(kCGEventKeyDown) |
         CGEventMaskBit(kCGEventKeyUp) |
         CGEventMaskBit(kCGEventFlagsChanged)
     )
-    tap = CGEventTapCreate(
-        kCGHIDEventTap,
-        kCGHeadInsertEventTap,
-        kCGEventTapOptionDefault,
-        event_mask,
-        hotkey_callback,
-        None
-    )
+    
+    # Essayer les deux types de tap dans une boucle
+    taps = [
+        (kCGSessionEventTap, "Session Event Tap"),
+        (kCGHIDEventTap, "HID Event Tap")
+    ]
+    
+    tap = None
+    for tap_type, tap_name in taps:
+        print(f"Trying {tap_name}...")
+        tap = CGEventTapCreate(
+            tap_type,
+            kCGHeadInsertEventTap,
+            kCGEventTapOptionDefault,
+            event_mask,
+            hotkey_callback,
+            None
+        )
+        if tap:
+            print(f"Successfully created {tap_name}")
+            break
 
     if tap is None:
-        print("Failed to create event tap.")
+        print("\nError: Failed to create event tap!")
+        print("\nPlease check that your terminal has the required permissions:")
+        print("1. Go to System Settings > Privacy & Security > Accessibility")
+        print("2. Click the '+' button")
+        print("3. Navigate to Applications > Utilities")
+        print("4. Add both Terminal.app and iTerm.app (if you use iTerm)")
+        print("\nAfter adding the permissions, you may need to:")
+        print("- Quit and restart your terminal")
+        print("- Run the command again")
         exit(1)
 
     run_loop_source = CFMachPortCreateRunLoopSource(None, tap, 0)
     CFRunLoopAddSource(CFRunLoopGetCurrent(), run_loop_source, kCFRunLoopCommonModes)
     CGEventTapEnable(tap, True)
+    print("Event tap enabled and running...")
     CFRunLoopRun()
 
 def main():

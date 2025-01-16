@@ -76,6 +76,8 @@ Run the main service script:
 python myspeech_service.py
 ```
 
+> **Important**: Your terminal application (Terminal.app or iTerm) needs Accessibility permissions to capture keyboard events. Go to System Settings > Privacy & Security > Accessibility and add your terminal application.
+
 This will start the application in the background. Press **Control+V** to start recording. <REC> will appear while the recording takes place, until a silence is detected. The transcribed text will be pasted into your active application.
 
 **Available Options** for `myspeech_service.py`:
